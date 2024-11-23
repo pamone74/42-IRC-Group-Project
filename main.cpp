@@ -3,69 +3,78 @@
 /*                                                        :::      ::::::::   */
 /*   main.cpp                                           :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: schennal <schennal@student.42.fr>          +#+  +:+       +#+        */
+/*   By: pamone <pamone@student.42abudhabi.ae>      +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
-/*   Created: 2024/11/06 19:17:08 by schennal          #+#    #+#             */
-/*   Updated: 2024/11/06 20:39:28 by schennal         ###   ########.fr       */
+/*   Created: 2024/11/23 19:29:16 by pamone            #+#    #+#             */
+/*   Updated: 2024/11/23 23:51:25 by pamone           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
-#include "Client.hpp"
-#include "Channel.hpp"
-#include "Server.hpp"
+#include "irc.hpp"
 
-// int main(void)
-// {
-//     Server ser;
-//     //std::string password = argv[2]; 
-    
-//     std::cout << "--------Server ----------------" << std::endl;
-//     try
-//     {
-//         signal(SIGINT, Server::SignalHandler);
-//         ser.ServerInt();
-//         // ser.ServerSocket();
-        
-//     }catch(const std::exception &err)
-//     {
-//         ser.CloseFds();
-//         std::cerr << err.what() << std::endl; 
-//     }
-// }
+bool work; 
 
 
+const char* check_port_num(const std::string& port)
+ {
+  
+    for (std::string::size_type i = 0; i < port.size(); ++i)
+     {
+        if (!std::isdigit(port[i]))
+        {
+            return "Error, port number contin non digit";
+        }
+    }
+    int conv_port = std::atoi(port.c_str());
+    if (conv_port < 1024 || conv_port > 65535) 
+    {
+        return "Error, port range between 1024 && 65535";
+    }
+  
+    return "";
+}
 
 
+void handle_ctrl_c(int sig) 
+{
+    (void)sig;
+    std::cout << std::endl;
+    std::cout << "succes out of program,Ctrl C" << std::endl;
+    work = false;
+}
 
-int main(int argc, char* argv[]) {
-    // Check if the correct number of arguments is passed (port and password)
-    if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " <port> <password>" << std::endl;
+int main(int ac, char** av) 
+{
+    if (ac != 3) 
+    {
+        std::cerr << "Enter ./ircserv port password" << std::endl;
         return 1;
     }
+    
+  
+    const char* port_error = check_port_num(av[1]);
+    if (port_error[0] != '\0') 
+    {
+        std::cerr << port_error << std::endl;
+        return 1;
+    }
+    
+    work = true;
+    signal(SIGINT, handle_ctrl_c);
 
-    // Get port and password from arguments
-    int port = std::stoi(argv[1]);  // Convert the port argument to an integer
-    std::string password = argv[2]; // The password argument is a string
+    // Assuming Server is a class defined elsewhere
+    Server server(HOST, av[1], av[2]); // Replace HOST with the actual host definition
+    //svervr take port numm and pass
 
-    // Create a Server object
-    Server ser;
-    std::cout << "--------Server ----------------" << std::endl;
-
-    try {
-        // Set up signal handler for SIGINT
-        signal(SIGINT, Server::SignalHandler);
-        
-        // Start the server with the provided port and password
-        ser.ServerInt(port, password);
-        // Your server should now listen on the given port, with the password provided
-        
-        // Optionally, you could also call other methods to handle connections, etc.
-        // ser.ServerSocket();
-    } catch (const std::exception& err) {
-        // If an error occurs, clean up resources and print the error
-        ser.CloseFds();
-        std::cerr << err.what() << std::endl;
+    try
+    {
+        server.initialize_server();
+        server.receive();
+        std::cout << "Server started and receiving..." << std::endl; // Placeholder
+    } 
+    catch (const std::exception& e) 
+    {
+        std::cerr << e.what() << std::endl;
     }
 
     return 0;

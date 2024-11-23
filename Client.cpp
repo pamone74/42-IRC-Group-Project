@@ -1,69 +1,137 @@
 /* ************************************************************************** */
 /*                                                                            */
 /*                                                        :::      ::::::::   */
-/*   Client.cpp                                        :+:      :+:    :+:   */
+/*   Client.cpp                                         :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: pamone <pamone@student.42.fr>              +#+  +:+       +#+        */
+/*   By: pamone <pamone@student.42abudhabi.ae>      +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
-/*   Created: 2024/10/31 12:33:00 by pamone            #+#    #+#             */
-/*   Updated: 2024/11/03 01:05:00 by pamone           ###   ########.fr       */
+/*   Created: 2024/11/23 23:54:08 by pamone            #+#    #+#             */
+/*   Updated: 2024/11/23 23:54:09 by pamone           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
-#include "Client.hpp"
-#include <cstring>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <stdexcept>
+#include "irc.hpp" 
 
-void Client::Connect(const std::string& ip, int port) {
-    // Create socket
-    _client_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (_client_fd < 0) {
-        throw std::runtime_error("Failed to create socket");
-    }
-
-    // Prepare server address
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
-    
-    // Convert IP address from text to binary form
-    if (inet_pton(AF_INET, ip.c_str(), &server_addr.sin_addr) <= 0) {
-        throw std::runtime_error("Invalid IP address");
-    }
-
-    // Connect to the server
-    if (connect(_client_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        throw std::runtime_error("Failed to connect to server");
-    }
-    SetIpAddress(ip);
-    std::cout << "Connected to server at " << ip << ":" << port << std::endl;
+Client::Client(int fduser):fd_user(fduser),nickN(""),userN(""),authent(false),oper(false)
+{
+    return;
 }
 
-void Client::SendMessage(const std::string& message) {
-    if (send(_client_fd, message.c_str(), message.size(), 0) < 0) {
-        throw std::runtime_error("Failed to send message");
-    }
+void Client::Authn(void)
+{
+    this->authent = true;
 }
 
-void Client::ReceiveMessage() {
-    char buffer[1024] = {0};
-    ssize_t bytes_received = recv(_client_fd, buffer, sizeof(buffer) - 1, 0);
-    if (bytes_received > 0) {
-        buffer[bytes_received] = '\0'; // Null-terminate the received string
-        std::cout << "Received from server: " << buffer << std::endl;
-    } else if (bytes_received == 0) {
-        std::cout << "Server disconnected." << std::endl;
-    } else {
-        throw std::runtime_error("Error receiving message");
-    }
+void Client::recivMessage(std::string msg)
+{
+    if(msg.find("\r\n")==std::string::npos)
+         msg = msg + "\r\n";
+    if (send(getFd(), msg.c_str(), strlen(msg.c_str()), 0) < 0)
+		std::cerr << "receiveMessage: send: " << strerror(errno) << std::endl;
 }
 
-void Client::Close() {
-    close(_client_fd);
-    std::cout << "Connection closed." << std::endl;
+bool Client::isAuthntec(void)
+{
+    return(this->authent);
 }
 
+void Client::setNickN(std::string nick)
+{ 
+    this->nickN = nick;
+}
 
+void Client::setUserN(std::string username)
+{
+    this->userN = username;
+}
+
+void Client::setRealN(std::string realname)
+{
+    this->realN = realname;
+}
+
+void Client::setHostN(std::string hostname)
+{
+    this->hostN = hostname;
+}
+
+void Client::setServerN(std::string servername)
+{
+    this->serverN = servername;
+}
+
+void Client::addChannel(Channel *channel)
+{
+    std::vector<Channel *>::iterator	i = this->chanVec.begin();
+	for ( ; i != this->chanVec.end(); i++)
+		if ((*i)->getChannelName() == channel->getChannelName())
+			return ;
+	this->chanVec.push_back(channel);
+	channel->addUser(this);
+	return ;
+}
+
+int Client::getFd(void)
+{
+    return (this->fd_user);
+}
+
+std::string Client::getNickN(void)
+{
+    return (this->nickN);
+}
+
+std::string Client::getUserN(void)
+{
+    return (this->userN);
+}
+
+std::string Client::getRealN(void)
+{
+    return (this->realN);
+}
+
+std::string Client::getHostN(void)
+{
+    return (this->hostN);
+}
+
+std::string Client::getServerN(void)
+{
+    return (this->serverN);
+}
+
+std::vector<Channel *> Client::getChannels(void)
+{
+    return std::vector<Channel *>();
+}
+
+void Client::rmChannel(Channel *channel)
+{
+    std::vector<Channel *>::iterator	i = this->chanVec.begin();
+	for ( ; i != this->chanVec.end(); i++)
+     {
+		if (*i == channel) 
+        {
+			this->chanVec.erase(i);
+			return ;
+		}
+	}
+	return ;
+}
+
+void Client::setOper(void)
+{
+    this->oper = ! this->oper;
+}
+
+bool Client::isOper(void)
+{
+    return(this->oper);
+}
+
+Client::~Client(void)
+{
+    close(this->fd_user);
+    return;
+}

@@ -3,41 +3,58 @@
 /*                                                        :::      ::::::::   */
 /*   Channel.hpp                                        :+:      :+:    :+:   */
 /*                                                    +:+ +:+         +:+     */
-/*   By: schennal <schennal@student.42.fr>          +#+  +:+       +#+        */
+/*   By: pamone <pamone@student.42abudhabi.ae>      +#+  +:+       +#+        */
 /*                                                +#+#+#+#+#+   +#+           */
-/*   Created: 2024/11/06 18:48:36 by schennal          #+#    #+#             */
-/*   Updated: 2024/11/06 19:50:36 by schennal         ###   ########.fr       */
+/*   Created: 2024/11/23 23:54:12 by pamone            #+#    #+#             */
+/*   Updated: 2024/11/23 23:54:13 by pamone           ###   ########.fr       */
 /*                                                                            */
 /* ************************************************************************** */
 
+
 #ifndef CHANNEL_HPP
 #define CHANNEL_HPP
+#include "irc.hpp"
+
+class Client;
+
+class Channel
+{
+    private:
+        std::vector<Client *> operets;
+        std::vector<Client *> usrs_name;
+        std::string			channel_name; 
+		std::string 		topiC;
+		std::string			passworD; 
+		std::string			modE;
+		unsigned int		limiT;
+
+    public:
+        Channel(std::string name,std::string password);
+		void				addUser(Client *user);
+		void				removeUser(Client *user);
+		void				messageFrChannel(std::string msg);
+		void				messageToChannel( std::string msg, int senderFd );
+        bool				check_mode(char c);
+		void				removeOper(Client *user);
+        void				addOper(Client *user);
+
+		void 				setTopic(std::string topic);
+		void 				setMode(std::string mode);
+		void 				setPassword(std::string pass);
+        void 				setLimit(unsigned int limit);
+		unsigned int		getLimit();
+        std::string			getChannelName(void);
+		std::string			getPassword(void);
+		std::vector<Client *>	getUsersname(void);
+        std::string 		getTopic();
+        std::string 		getMode();
+		Client				*getClientByNick(std::string nick);
+        Client				*getOperByNick(std::string nick);
+        ~Channel(void);
 
 
-#include <iostream>
-#include <vector> 
-#include <sys/socket.h> 
-#include <sys/types.h> 
-#include <netinet/in.h> //-> for sockaddr_in
-#include <fcntl.h> //-> for fcntl()
-#include <unistd.h> //-> for close()
-#include <arpa/inet.h> //-> for inet_ntoa()
-#include <poll.h> //-> for poll()
-#include <csignal> //-> for signal()
-
-#include "Client.hpp"
-
-
-
-class Channel {
-public:
-    std::string name;
-    std::vector<Client*> users;
-    // Other channel features like topic, mode, etc.
-
-    Channel(const std::string& channel_name) : name(channel_name) {}
-    void AddUser(Client* client) { users.push_back(client); }
-    void RemoveUser(Client* client) { users.erase(std::remove(users.begin(), users.end(), client), users.end()); }
 };
+
+
 
 #endif

@@ -1,315 +1,434 @@
-/* ************************************************************************** */
-/*                                                                            */
-/*                                                        :::      ::::::::   */
-/*   Server.cpp                                         :+:      :+:    :+:   */
-/*                                                    +:+ +:+         +:+     */
-/*   By: schennal <schennal@student.42.fr>          +#+  +:+       +#+        */
-/*                                                +#+#+#+#+#+   +#+           */
-/*   Created: 2024/10/31 12:31:50 by pamone            #+#    #+#             */
-/*   Updated: 2024/11/06 20:49:45 by schennal         ###   ########.fr       */
-/*                                                                            */
-/* ************************************************************************** */
 
-#include "Server.hpp"
-#include "Client.hpp"
-#include <cstddef>
-#include <cstdlib>
-#include <exception>
-#include <fcntl.h>
-#include <iostream>
-#include <iterator>
-#include <netinet/in.h>
-#include <stdexcept>
-#include <sys/poll.h>
-#include <sys/socket.h>
-#include <string.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include "irc.hpp"
 
-
-bool Server::_signal = false;
-
-bool isPortValid(int port) {
-    // Check if port is in the valid range (1024 - 65535)
-    return (port >= 1024 && port <= 65535);
-}
-
-bool isPortAvailable(int port) {
-    // Create a socket for checking port availability
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        std::cerr << "Error creating socket." << std::endl;
-        return false;
-    }
-
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = INADDR_ANY;
-
-    // Try to bind the socket to the port
-    int bind_result = bind(sockfd, (struct sockaddr*)&addr, sizeof(addr));
-    close(sockfd);
-
-    // If bind failed, the port is already in use
-    return bind_result == 0;  // bind_result == 0 means the port is available
-}
-
-void Server::SignalHandler(int signum)
+Server::Server(std::string host,std::string port, std::string password)
+	:_host(host),_port(port), _password(password)
 {
-    (void)signum;
-
-    std::cout << "The signal Received is " << signum << std::endl;
-    Server::_signal = true;
+    std::cout << GREEN << "Server created.\n" << RESET;
 }
 
-void Server::CloseFds()
+
+/*
+server: struct addrinfo that specifies criteria for selecting socket address structures returned by getaddrinfo()
+*result: pointer to a linked list of address structures returned by getaddrinfo(). It represents all possible addresses that match the criteria specified in server.
+represents the current address information being considered in the loop. It allows you to iterate through and test each potential network address that getaddrinfo() has returned
+run:
+	allows the server to reuse the address if it’s in a TIME_WAIT state.
+
+server.ai_flags = AI_PASSIVE : 
+	 wildcard IP address(address is automatically filled in with the local IP address), the server will listen on all available network interfaces.
+Get address info
+NULL: the server should listen on any available network interface
+this->m_port.c_str():
+	server’s port number as a string.
+
+ai_protocol: Protocol to be used (usually 0, which means any protocol associated with the socket type).
+*/
+
+void Server::initialize_server()
 {
-    for(size_t i(0); i < _clients.size(); i++)
-    {
-         std::cout << "Closing the Client FD" << std::endl;
-        close(_clients[i].GetFd());
-    }
-    if(_server_socketFd != -1)
-    {
-        std::cout << "Closing the Server Socket FD" << std::endl;
-        close(_server_socketFd);
-    }
+	struct addrinfo server, *result, *tmp; 
+	int run = 0;
+
+	memset(&server, 0, sizeof(server));
+	server.ai_family = AF_INET; 
+	server.ai_socktype = SOCK_STREAM; 
+	server.ai_flags = AI_PASSIVE;
+	
+	int adinfo = getaddrinfo(NULL, this->_port.c_str(), &server, &result);
+	
+	if (adinfo != 0)
+	{
+		throw std::runtime_error(RED "Error: Failed to Get the Address info." RESET);
+	}
+	// Loop through all the results and bind to the first we can
+	for (tmp = result; tmp != NULL; tmp = tmp->ai_next)
+	{
+		this->_serverfd = socket(tmp->ai_family, tmp->ai_socktype, tmp->ai_protocol);
+		if (this->_serverfd == -1)
+			continue;
+		if (setsockopt(this->_serverfd, SOL_SOCKET, SO_REUSEADDR, &run, sizeof(int)) == -1)
+		{
+			close(this->_serverfd);
+			throw std::runtime_error(RED "Error: Cannot setsockopt." RESET);
+		}
+		if (bind(this->_serverfd, tmp->ai_addr, tmp->ai_addrlen) < 0)
+		{
+			std::cout << GREEN << "Failed to Bind." << tmp->ai_addr << RESET;
+			close(this->_serverfd);
+			continue;
+		}
+		break;
+	}
+	freeaddrinfo(result);
+	// No address succeeded in binding
+	if (tmp == NULL)
+	{
+		throw std::runtime_error(RED "Error: unable to bind socket to any address." RESET);
+	}
+	if (listen(this->_serverfd, 10) == -1)
+	{
+		close(this->_serverfd);
+		throw std::runtime_error(RED "Error: unable to listen for connections." RESET);
+	}
 }
 
+/*
+ create an array of pollfd structures
+ Each pollfd structure represents a file descriptor and the events you're interested in
+ server's socket file descriptor (_serverfd) added to this array first, monitoring it for new client connections.
+ POLLIN: Indicates we are interested in reading data
+ 0: This is where the results of the poll will be stored
 
-void Server::ServerSocket()
+ _fds: A vector that stores all the file descriptors that poll() will monitor. The server socket is added here initially.
+ _fds: each representing a file descriptor that the server is monitoring.
+
+ iterator pointing to the first element(server's main listening socket) in the _fds vector.
+ this->_fds.size(): how many file descriptors the server is monitoring.
+ 5000: timeout value in milliseconds (5 seconds). If no events are detected within this time frame, poll() will return, allowing the server to continue executing other tasks or check the state of work.
+ monitors multiple file descriptors to see if any of them are ready for reading, writing, or have an error condition. It returns the number of file descriptors with events
+*/
+void Server::receive()
 {
-    _server_socketFd = socket(AF_INET, SOCK_STREAM, 0);
-    if(_server_socketFd == -1)
-    {
-        throw(std::runtime_error("Failed to start"));
-        close(_server_socketFd);
-    }
-    int opt = 1;
-    // set SO_REUSEADDR option
-    // Fixies any issues if the address is in use case. 
-    if(setsockopt(_server_socketFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
-    {
-        // Error exception
+	struct pollfd	pollFd = {this->_serverfd, POLLIN, 0};
+	std::vector<pollfd>::iterator	it;
+	if (fcntl(this->_serverfd, F_SETFL, O_NONBLOCK) == -1)
+		throw std::runtime_error(RED "receive: fcntl: " + std::string(strerror(errno)) + RESET);
+	this->_fds.push_back(pollFd);
+	// std::cout << GREEN << "Server listening on <host>:<port> = [ " << this->m_host  <<" : " <<this->m_port << " ]🔊"<< RESET << std::endl;
+	std::cout << std::endl;
+    std::cout << "             +-------------------------------+" << std::endl;
+    std::cout << "             |      Start Server Process     |" << std::endl;
+    std::cout << "             +-------------------------------+" << std::endl;
+    std::cout << "                           |" << std::endl;
+    std::cout << "             +-------------------------------+" << std::endl;
+    std::cout << "             |  Create a Socket (socket())   |" << std::endl;
+    std::cout << "             +-------------------------------+" << std::endl;
+    std::cout << "                           |" << std::endl;
+    std::cout << "           Success                     Failure" << std::endl;
+    std::cout << "             |                              |" << std::endl;
+    std::cout << "    +------------------+               +-------------------+" << std::endl;
+    std::cout << "    | Bind to Address  | <---Retry---> | Exit with Error   |" << std::endl;
+    std::cout << "    +------------------+               +-------------------+" << std::endl;
+    std::cout << "             |" << std::endl;
+    std::cout << "    +-------------------------------+" << std::endl;
+    std::cout << "    |  Start Listening (listen())   |" << std::endl;
+    std::cout << "    +-------------------------------+" << std::endl;
+    std::cout << "            	|" << std::endl;
+    std::cout << "    +-------------------------------+" << std::endl;
+    std::cout << "    |  Accept Connection (accept()) |" << std::endl;
+    std::cout << "    +-------------------------------+" << std::endl;
+    std::cout << "            	|" << std::endl;
+    std::cout << "    +-------------------------------+" << std::endl;
+    std::cout << "    |     Handle Client Requests    |" << std::endl;
+    std::cout << "    +-------------------------------+" << std::endl;
+    std::cout << "            	|" << std::endl;
+    std::cout << "    +-------------------------------+" << std::endl;
+    std::cout << "    |      Close Client Socket      |" << std::endl;
+    std::cout << "    +-------------------------------+" << std::endl;
+    std::cout << "           	|" << std::endl;
+    std::cout << "    +-------------------------------+" << std::endl;
+    std::cout << "    |      Shutdown Server Loop     |" << std::endl;
+    std::cout << "    +-------------------------------+" << std::endl;
 
-        std::cerr << "Socket Failure" << std::endl;
-        close(_server_socketFd);
-        exit(EXIT_FAILURE);
-    }
+    std::cout << std::endl;
+	std::cout << GREEN << "Local Host: " << RESET << this->_host << std::endl;
+	std::cout << GREEN << "Port Number: " << RESET << this->_port << std::endl;
+	std::cout << GREEN << "Password: " << RESET << this->_password << std::endl;
+	std::cout << GREEN << "Server listening👂" << RESET << std::endl;
 
-    struct sockaddr_in add; // the struct that contians the information of the server 
-    add.sin_family = AF_INET; // IPv4
-    add.sin_addr.s_addr = INADDR_ANY; 
-    add.sin_port = htons(this->_port);
-
-    std::cout << "Server IP address: " << inet_ntoa(add.sin_addr) << std::endl;
-    // binding the Ip & the port to the network
-
-    if(bind(_server_socketFd, (struct sockaddr *)&add, sizeof(add)) < 0)
-    {
-         std::cerr << "Failed to Bind the socket";
-         close(_server_socketFd);
-         exit(EXIT_FAILURE);
-    }
-    listen(_server_socketFd, 3); //  I am setting the backlog to 3 to allow connection up to 3 to be in queue
-    // The backlog is system dependant. for linux the maximium is 256 or we can use SOMACONN to be automatically decided by the system
-    
-    
-    // Setting the socket for the non blocking
-
-    // int flags = fcntl(_server_socketFd, F_GETFL, 0);
-    // When you set a socket to non-blocking mode, fcntl changes the behavior of the socket functions (e.g., accept, recv, send). 
-    //In non-blocking mode, these functions return immediately if an operation cannot be completed, instead of waiting (or "blocking").
-    if(fcntl(_server_socketFd, F_SETFL, O_NONBLOCK) < 0)
-    {
-        throw(std::runtime_error("Failed to Set to Non-blocking"));
-    }
-    
-    
- // Poll  : Poll is used to monitor multiple file descriptor. 
- // Uses an array of pull structures each representing a specific file descriptor.
-
- struct pollfd poll;
- 
- poll.fd = _server_socketFd;
- poll.events = POLLIN; // for reading data.
- poll.revents = 0;
- _fds.push_back(poll);
+	while (work)
+	{
+		it = this->_fds.begin();
+		if (poll(&(*it), this->_fds.size(), 5000) == -1)
+			throw std::runtime_error(RED  "receive: poll: " + std::string(strerror(errno)) + RESET);
+		this->_checkPoll();
+	}	
 }
 
-void Server::ServerInt(int port, const std::string& password)
+//Checks if there's an event on the file descriptor (like data to be read).
+//POLLIN: there’s data available to be read from the file descriptor (like a message from a client).
+//When poll() returns, it updates the revents field of each pollfd struct with the events that actually occurred.
+//If the event is on the server socket, it means a new client is trying to connect
+
+void Server::_checkPoll(void)
 {
-    if (!isPortValid(port)) {
-        throw std::invalid_argument("Invalid port number. Port must be between 1024 and 65535.");
-    }
-
-    if (!isPortAvailable(port)) {
-        throw std::runtime_error("Port is already in use or unavailable.");
-    }
-
-    
-    this->_port = port;
-    this->_password = password;
-    ServerSocket();
-    std::cout << "Server listening on port " << _port << std::endl;
-    std::cout << "Server " << _server_socketFd << " Connection Established" << std::endl;
-    
-    // Running the server until the signal is received from the client
-
-    while (Server::_signal == false ) {
-        int pol =   poll(&_fds[0], _fds.size(), -1);
-        if(pol < 0 )
-            throw (std::runtime_error("Poll failed")); // wait for an event.
-        for(size_t i(0); i < _fds.size(); i++)
-        {
-            if(_fds[i].revents & POLLIN)
-            {
-                if(_fds[i].fd == _server_socketFd)
-                    AcceptNewClient(); // Allow the connection for the new client
-                else
-                 ReceiveNewData(_fds[i].fd);
-            }
-        }
-    
-    }
-    CloseFds();
+	std::vector<pollfd>::iterator it;
+	for (it = this->_fds.begin(); it != this->_fds.end(); it++)
+	{
+		if (it->revents && POLLIN)
+		{
+			if (it->fd == this->_serverfd)
+				this->_createClient();
+			else
+				this->_messageReceived(it->fd);			
+			break;
+		}	
+	}
 }
 
+/*
+clientFd:
+	file descriptor for the new client connection.
+*newClient:
+	pointer to a Client object, which will represent the new client.
+cli_addr:
+	This structure will store information about the client's address (like IP and port)
+length:
+	store the size of the cli_addr structure. It's needed by the accept() function
 
-Client* Server::FindClientByFd(int fd) {
-    // Loop through all clients to find the one with the matching file descriptor
-    for (size_t i = 0; i < _clients.size(); i++) {
-        Client& client = _clients[i];  // Explicitly declare the type of 'client'
-        if (client.GetFd() == fd) {
-            // Client found, return the pointer to the client
-            return &client;
-        }
-    }
-    return NULL;  // Return NULL if no client with the given fd is found
-}
+clientFd = accept(this->_serverfd, (struct sockaddr *)&cli_addr, &length);
 
+because accept() needs to know how big the address structure is to correctly fill it with the client's information.
+waits for a new client to connect to your server. When a client connects, it creates a new socket (a new file descriptor) specifically for communicating with that client, and returns it as clientFd
+@parameters;
+this->_serverfd: 
+	This is the server's main listening socket.
+&cli_addr:
+	This is where the client's address information (like IP and port) will be stored.
+&len: 
+	This tells accept() how much space it has to store the client's address.
 
+pollfd clientPollFd = {clientFd, POLLIN, 0};
+	Set the New Client Socket to Non-blocking Mode
+	POLLIN you want to know when there is data available to read on the socket.
+	0: initializes the revents field to zero.
 
+fcntl()
+ - F_SETFL: tells fcntl that we're going to set some flags on the file descriptor.
+ - O_NONBLOCK: This flag makes the socket non-blocking, meaning that reading from or writing to the socket will not make the program wait if there's no data.
 
-// Accepting new Client
-
-void Server::AcceptNewClient()
+newClient = new Client(clientFd);
+	creates a new Client object to represent the client. The clientFd is passed to the Client constructor,
+	Client object knows which file descriptor (which client) it is associated with.
+*/
+void Server::_createClient(void)
 {
-    Client client;
-    struct sockaddr_in client_id;
-    struct pollfd new_poll;
-    socklen_t len = sizeof(client_id);
+	int		clientFd;
+	Client	*newClient;
+	struct sockaddr_in cli_addr;
+	socklen_t	length;
+	length = sizeof(cli_addr);
+	clientFd = accept(this->_serverfd, (struct sockaddr *)&cli_addr, &length);
+	if (clientFd < 0)
+		throw std::runtime_error(RED "createClient: accept: " + std::string(strerror(errno)) + RESET);
+	pollfd clientPollFd = {clientFd, POLLIN, 0};
+	if (fcntl(clientFd, F_SETFL, O_NONBLOCK) == -1)
+		throw std::runtime_error(RED "createClient: fcntl: " + std::string(strerror(errno)) + RESET);
 
-    int connect_fd = accept(_server_socketFd, (sockaddr *)&(client_id),  &len);
-    if (connect_fd == -1) {
-        std::cout << "Failed to Accept" << std::endl;
-        return;
-    
-    }
-    if(fcntl(connect_fd, F_SETFL, O_NONBLOCK) == -1)
-    {
-        std::cout << "Failed " << std::endl; 
-        return;
-    }
-
-    new_poll.fd = connect_fd; // add the fd to the pool
-    new_poll.events = POLLIN; // Setting for reading the data from the fd
-    new_poll.revents = 0;
-    
-    client.SetFd(connect_fd);
-    client.SetIpAddress(inet_ntoa(client_id.sin_addr)); // convert the IP address to the string 
-    _clients.push_back(client);
-    _fds.push_back(new_poll);  // Adding the client socket to the stack of poll fds
-
-
-    // connected 
-
-    std::cout << connect_fd <<  " Connected " << std::endl;
-    
+	newClient = new Client(clientFd);
+	//Add the New Client and Pollfd to Vectors
+	this->_clientsVec.push_back(newClient);
+	this->_fds.push_back(clientPollFd);
+	std::cout << GREEN <<  "Successfully new client added with fd: " << clientFd << RESET << std::endl;
+	return ;
 }
 
-
-std::string trim(const std::string& str) {
-    size_t first = str.find_first_not_of(" \t\r\n");
-    size_t last = str.find_last_not_of(" \t\r\n");
-    if (first == std::string::npos || last == std::string::npos)
-        return "";
-    return str.substr(first, (last - first + 1));
-}
-
-void Server::ReceiveNewData(int fd)
+void Server::_messageReceived(int fd)
 {
-    char buff[1024]; // buffer for the received data
-    memset(buff,0,sizeof(buff));
-    
-    ssize_t byte = recv(fd, buff, sizeof(buff)-1, 0);
-    if(byte <= 0)
-    {
-        std::cout << "Client Disconnected" << std::endl;
-        ClearClients(fd);
-        close(fd);
-    }
-    else 
-    {
-        buff[byte] = '\0';
-        std::cout << "....Clients Data...." << buff << std::endl;
-        
-        
-        Client *client = FindClientByFd(fd);
-        // Find client by file descriptor
-        // for (size_t i = 0; i < _clients.size(); i++) {
-        //     if (_clients[i].GetFd() == fd) {
-        //         client = &_clients[i];
-        //         break;
-        //     }
-        // }
+	// read data from the socket one character at a time.
+	char buffer;
+	// accumulate the incoming message from the client.
+	std::string string;
+	int counter = 0;
+	while (string.find("\n"))
+	{
+		// reads data from the client socket fd into buffer.
+		int status = recv(fd, &buffer, sizeof(buffer), 0);
+		if (status < 0)
+			continue;
+		//the client has closed the connection
+		else if (status == 0)
+		{
+			std::cout << GREEN << "Successfully client with fd [ "<< fd << " ] deleted" << RESET << std::endl;
+			deleteClient(fd);
+			return;
+		}
+		else
+		{
+			string += buffer;
+			//protect the server from potential infinite loops, excessive memory usage, or corrupted input
+			//forces str to a default string to avoid issues.
+			if (counter > 500)
+				string = "/Error: Input exceeded limit, operation halted.\r\n";
+			//If a newline character is found in str, it indicates that a complete command has been received.
+			if (string.find("\n") != std::string::npos)
+			{
+				//string only contains a newline character (\n).
+				if (string.size() == 1)
+					string = "/Error: Empty command received. No action performed.\r\n";
+				Command command(string, fd, *this);
+				break;	
+			}
+		}
+	}
+}
 
-        if (client)
-        {
-            if (!client->IsAuthenticated()) {
+// Whenever a client provides a file descriptor, this function will be used to look up the corresponding Client object.
+//function will return a pointer to a Client
+//the function is a member of the Server class and is used to get a client by their file descriptor.
+Client *Server::getClientByFd(int fd)
+{
+	//m_clientVec is a member variable of the Server class, vector containing pointers to Client objects.
+	std::vector<Client*>::iterator it = this->_clientsVec.begin();
+	for (; it != this->_clientsVec.end(); it++)
+	{
+		//access the Client pointer it points to.
+		//Compares the file descriptor of the current client with the given fd. match=the current client is the one we are looking for.
+		if ((*it)->getFd() == fd)
+			return (*it);
+	}
+	return (NULL);
+}
 
-                std::cout << "Server stored password: '" << _password << "'" << std::endl;  // Print server-side password
+std::string Server::getpass()
+{
+    return(_password);
+}
+std::string Server::getport()
+{
+    return (_port);
+}
 
-               
-                // If not authenticated, check for password
-                if (std::string(trim(buff)) == _password) {
-                    client->SetAuthenticated(true);
-                    send(fd, "Authentication successful!\n", 27, 0);
-                } else {
-                    send(fd, "Incorrect password. Disconnecting...\n", 38, 0);
-                    ClearClients(fd);
-                    close(fd);
-                }
-            }
-            else {
-                // Handle normal commands (nickname, join channel, etc.)
-                HandleCommand(fd, buff); // Implement command handling here
-            }
+Client	*Server::getClientByNick(std::string nick)
+{
 
-        // We can parse, check, authenticate, handle the command, etc
-        }
-    }
+	std::vector<Client *>::iterator	it = this->_clientsVec.begin();
+
+	for ( ; it != this->_clientsVec.end(); it++)
+		if ((*it)->getNickN() == nick)
+			return (*it);
+
+	return (NULL);
+
+}
+
+std::vector<Client *>	Server::getClients(void)
+{
+	return (this->_clientsVec);
+}
+
+// broadcast a message to all connected clients on the IRC server
+void	Server::messageAllclients( std::string message)
+{
+
+	std::vector<Client *>::iterator	it = this->_clientsVec.begin();
+	// Check if the message ends with a carriage return and newline characters.
+	if (message.find("\r\n") == std::string::npos)
+		message +="\r\n";
+	// Iterate over all connected clients in the vector.
+	for( ; it != this->_clientsVec.end(); it++)
+	{
+		// Send the message to each client .
+		if (send((*it)->getFd(), message.c_str(), strlen(message.c_str()), 0) < 0)
+		{
+			// If sending fails, throw an error with a descriptive message.
+            throw std::runtime_error("messageAllclients: send: " + std::string(strerror(errno)));
+		}
+	}
+	return ;
+}
+
+// to get messages accross to the server 
+void	Server::messageToServer( std::string msg, int userFd ) {
+
+	std::vector<Client *>::iterator	it = this->_clientsVec.begin();
+
+	if (msg.find("\r\n") == std::string::npos)
+		msg +="\r\n";
+
+	for( ; it != this->_clientsVec.end(); it++)
+		if ((*it)->getFd() != userFd)
+			if (send((*it)->getFd(), msg.c_str(), strlen(msg.c_str()), 0) < 0)
+              std::cerr << "messageToServer: send: " << strerror(errno) << std::endl;
+
+	return ;
+
+}
+
+//remove a client from the server completely
+void	Server::deleteClient(int fd)
+{
+	std::vector<Client *>::iterator	clientIt = this->_clientsVec.begin();
+	std::vector<Channel *>::iterator	channelIt = this->_channelsVec.begin();
+	std::vector<pollfd>::iterator	pollIt = this->_fds.begin();
+
+	// Remove the Client from All Channels
+	for ( ; channelIt != this->_channelsVec.end(); channelIt++)
+		(*channelIt)->removeUser(getClientByFd(fd));
+	// Remove the Client's File Descriptor from the Poll Vector and Close the Socket
+	for ( ; pollIt != this->_fds.end(); pollIt++)
+	{
+		if ((*pollIt).fd == fd)
+		{
+			this->_fds.erase(pollIt);
+			close(fd);
+			break ;
+		}
+	}
+	// Remove the Client Object from the Client Vector and Free Memory
+	for ( ; clientIt != this->_clientsVec.end(); clientIt++)
+	{
+		if ((*clientIt)->getFd() == fd)
+		{
+			delete *clientIt;
+			this->_clientsVec.erase(clientIt);
+			break ;
+		}
+	}
+}
+
+void	Server::addChannel(Channel *channel)
+{
+	this->_channelsVec.push_back(channel);
+}
+
+int	Server::getServerFd(void)
+{
+	return (this->_serverfd);
 }
 
 
-Channel* Server::FindOrCreateChannel(const std::string& channel_name) {
-    // Loop through all existing channels
-    for (size_t i = 0; i < _channels.size(); i++) {
-        Channel& channel = _channels[i];  // Explicitly declare the type of 'channel'
-        if (channel.name == channel_name) {
-            // Channel found, return it
-            return &channel;
-        }
-    }
+// we create the name of the channels for easier lookup later 
+Channel*	Server::getChannelByName(std::string name)
+{
 
-    // If the channel doesn't exist, create a new one
-    _channels.push_back(Channel(channel_name));
-    return &_channels.back();  // Return the newly created channel
+	std::vector<Channel *>::iterator	it = this->_channelsVec.begin();
+
+	if (name[0] != '#')
+		name = "#" + name;
+
+	for ( ; it != this->_channelsVec.end(); it++)
+		if ((*it)->getChannelName() == name)
+			return (*it);
+
+	return (NULL);
+
 }
 
+bool	Server::checkOperators(void)
+{
+	std::vector<Client *>::iterator	it = this->_clientsVec.begin();
+	for(; it != this->_clientsVec.end(); it++)
+		if ((*it)->isOper())
+			return true;
+	return false;
+}
 
+Server::~Server()
+{
+	std::cout << "desctuctor called!" << std::endl;
 
-
-
-
+	for (size_t i = 0; i < this->_clientsVec.size(); i++)
+	{
+		delete this->_clientsVec[i];
+	}
+	for (size_t i = 0; i < this->_channelsVec.size(); i++)
+	{
+		delete this->_channelsVec[i];
+	}
+	for (size_t i = 0; i < this->_fds.size(); i++)
+	{
+		close(this->_fds[i].fd);
+	}
+}

@@ -1,42 +1,62 @@
+/* ************************************************************************** */
+/*                                                                            */
+/*                                                        :::      ::::::::   */
+/*   Client.hpp                                         :+:      :+:    :+:   */
+/*                                                    +:+ +:+         +:+     */
+/*   By: pamone <pamone@student.42abudhabi.ae>      +#+  +:+       +#+        */
+/*                                                +#+#+#+#+#+   +#+           */
+/*   Created: 2024/11/23 23:54:01 by pamone            #+#    #+#             */
+/*   Updated: 2024/11/23 23:54:02 by pamone           ###   ########.fr       */
+/*                                                                            */
+/* ************************************************************************** */
+
 #ifndef CLIENT_HPP
 #define CLIENT_HPP
 
-#include <iostream>
-#include <sys/socket.h>
-#include <string>
+#include "irc.hpp"
 
+
+class Channel;
 class Client
 {
-private:
-    int _client_fd;
-    std::string _ip_address;
-    bool _authenticated;
-    std::string _nickname;
-    std::string _username;
+    private:
+    	int fd_user;
+    	std::string nickN;
+    	std::string userN;
+    	bool authent;
+    	bool oper;
+    	std::string realN;
+    	std::string hostN;
+    	std::string serverN;
+    	std::vector<Channel *> chanVec;// i make vector type of it is channel and i call itchanVec
 
-public:
-    Client() : _client_fd(-1), _authenticated(false) {} // Initialize _client_fd to -1
-    int GetFd() { return _client_fd; }
-    void SetIpAddress(const std::string& ip_address) { _ip_address = ip_address; }
-    void SetFd(int fd) { _client_fd = fd; }
+    public:
+    Client(int fduser); 
+    void Authn(void);
+    void recivMessage(std::string msg);
+    bool isAuthntec(void);
 
-    bool IsAuthenticated() const { return _authenticated; }
-    void SetAuthenticated(bool auth) { _authenticated = auth; }
+    void setNickN(std::string nick);
+    void setUserN(std::string username);
+    void setRealN(std::string realname);
+    void setHostN(std::string hostname);
+    void setServerN(std::string servername);
+    void addChannel(Channel *channel);
 
-    void SetNickname(const std::string& nickname) { _nickname = nickname; }
-    std::string GetNickname() const { return _nickname; }
-
-    void SetUsername(const std::string& username) { _username = username; }
-    std::string GetUsername() const { return _username; }
-
-    void Connect(const std::string& ip, int port);
-    void SendMessage(const std::string& message);
-    void ReceiveMessage();
-    void Close();
-
-    
+    int getFd(void);
+    std::string getNickN(void);
+    std::string getUserN(void);
+    std::string getRealN(void);
+    std::string getHostN(void);
+    std::string getServerN(void);
+    std::vector<Channel *> getChannels(void);
+    void rmChannel(Channel *channel);
+    void setOper(void);
+    bool isOper(void);
+    ~Client(void);
 
 
 };
+
 
 #endif
