@@ -39,7 +39,7 @@ void handle_ctrl_c(int sig)
 {
     (void)sig;
     std::cout << std::endl;
-    std::cout << "success out of the program, Ctrl C" << std::endl;
+    std::cout << "Successfully exiting the program, Ctrl + C pressed" << std::endl;
     work = false;
 }
 
