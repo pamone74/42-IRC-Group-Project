@@ -22,7 +22,7 @@ const char* check_port_num(const std::string& port)
      {
         if (!std::isdigit(port[i]))
         {
-            return "Error, port number contin non digit";
+            return "Error, port number contain non-digit";
         }
     }
     int conv_port = std::atoi(port.c_str());
@@ -39,7 +39,7 @@ void handle_ctrl_c(int sig)
 {
     (void)sig;
     std::cout << std::endl;
-    std::cout << "succes out of program,Ctrl C" << std::endl;
+    std::cout << "success out of the program, Ctrl C" << std::endl;
     work = false;
 }
 
