@@ -13,11 +13,13 @@
 
 #include "irc.hpp"
 
+// Parameterized constructor to initialize the channel name and password.
 Channel::Channel(std::string name, std::string password):channel_name(name),passworD(password)
 {
     return;
-}//perameter constructor
+}
 
+// Adds a user to the channel's list of users if the user is not already in the channel.
 void Channel::addUser(Client *user)//this function used to add new user
 {
     if(getClientByNick(user->getNickN()) == NULL)
@@ -25,6 +27,7 @@ void Channel::addUser(Client *user)//this function used to add new user
     return;
 }
 
+// Removes a user from the channel's list of users if found.
 void Channel::removeUser(Client *user)
 {
     std::vector<Client *>::iterator	i = this->usrs_name.begin();
@@ -39,6 +42,8 @@ void Channel::removeUser(Client *user)
 	return ;
 }
 
+// Iterates over all users in the channel and sends the given message to each user.
+// Ensures the message ends with '\r\n' for proper formatting.
 void Channel::messageFrChannel(std::string msg)
 {
     std::vector<Client *>::iterator	i = this->usrs_name.begin();//iterate over the list of users 
@@ -51,6 +56,7 @@ void Channel::messageFrChannel(std::string msg)
 	
 }
 
+// Sends a message to all users in the channel except the one identified by senderFd.
 void Channel::messageToChannel(std::string msg, int senderFd)
 {
     std::vector<Client *>::iterator	i = this->usrs_name.begin();
@@ -63,6 +69,7 @@ void Channel::messageToChannel(std::string msg, int senderFd)
 	return ;
 }
 
+// Checks if the channel has a specific mode enabled.
 bool Channel::check_mode(char c)
 {
     for(size_t i =0; i <modE.size(); i++)
@@ -73,6 +80,8 @@ bool Channel::check_mode(char c)
     return(false);
 }
 
+
+// Adds or removes a user to/from the list of channel operators.
 void Channel::removeOper(Client *user)
 {
     std::vector<Client *>::iterator i = this->operets.begin();
@@ -95,6 +104,8 @@ void Channel::addOper(Client *user)// add new operators
     return;
 }
 
+
+// Updates channel properties like topic, mode, password, or user limit.
 void Channel::setTopic(std::string topic)
 {
     this->topiC= topic;
@@ -115,6 +126,8 @@ void Channel::setLimit(unsigned int limit)
     this->limiT = limit;
 }
 
+
+// Provides access to channel properties like limit, name, password, users, topic, and mode.
 unsigned int Channel::getLimit()
 {
     return (limiT);
@@ -145,18 +158,20 @@ std::string Channel::getMode()
     return (modE);
 }
 
+
+// Searches for a user in the list of users or operators by their nickname.
 Client *Channel::getClientByNick(std::string nick)
 {
-    // we create vector itroters to itreate through list of users
+    
     std::vector<Client *>::iterator     i = this->usrs_name.begin();
-    if(nick[0] == ':')// if the nick is :wadha, first array is :
-    nick.erase(0,1); //start erase from postion 0, how many char to erase is 1
-    for (; i != this->usrs_name.end(); i++)//check if the itretors dosent reach to end
+    if(nick[0] == ':')
+    nick.erase(0,1);
+    for (; i != this->usrs_name.end(); i++)
     {
-        if((*i)->getNickN()== nick)//if i have nicks wadha sara mera , and im searching for sara
-        return(*i);//if wadha == wadha return wadha
+        if((*i)->getNickN()== nick)
+        return(*i);
     }
-    return(NULL);// if the nick name not found return null
+    return(NULL);
 }
 
 Client *Channel::getOperByNick(std::string nick)
